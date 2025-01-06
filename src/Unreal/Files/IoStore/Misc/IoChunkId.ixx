@@ -5,6 +5,8 @@ import <memory>;
 
 import Saturn.Readers.FArchive;
 
+#define BYTESWAP_ORDER16_unsigned(x) ((((x) >> 8) & 0xff) + (((x) << 8) & 0xff00))
+
 export enum class EIoChunkType : uint8_t {
 	Invalid = 0,
 	ExportBundleData = 1,
@@ -66,6 +68,9 @@ public:
 		memset(Id, 0, 8);
 	}
 
+	inline const uint64_t GetChunkId() { return *reinterpret_cast<uint64_t*>(&Id[0]); }
+	inline const uint16_t GetChunkIndex() { return *reinterpret_cast<uint16_t*>(&Id[8]); }
+
 	inline const uint8_t* GetData() const { return Id; }
 	inline uint32_t	GetSize() const { return sizeof Id; }
 	//inline uint64_t GetPosition() const { return Position; }
@@ -93,3 +98,16 @@ struct std::hash<FIoChunkId> {
 		return GetTypeHash(k);
 	}
 };
+
+export	inline FIoChunkId CreateIoChunkId(uint64_t ChunkId, uint16_t ChunkIndex, EIoChunkType IoChunkType) {
+	uint8_t Data[12] = { 0 };
+
+	*reinterpret_cast<uint64_t*>(&Data[0]) = ChunkId;
+	*reinterpret_cast<uint16_t*>(&Data[8]) = BYTESWAP_ORDER16_unsigned(ChunkIndex);
+	*reinterpret_cast<uint8_t*>(&Data[11]) = static_cast<uint8_t>(IoChunkType);
+
+	FIoChunkId IoChunkId;
+	IoChunkId.Set(Data, 12);
+
+	return IoChunkId;
+}

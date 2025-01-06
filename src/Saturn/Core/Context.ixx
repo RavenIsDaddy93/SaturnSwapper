@@ -7,6 +7,7 @@ export module Saturn.Context;
 import Saturn.CosmeticState;
 import Saturn.Items.PluginModel;
 import Saturn.Items.LoadoutModel;
+import Saturn.Files.FileProvider;
 import Saturn.Structs.FileModification;
 
 import <string>;
@@ -22,20 +23,12 @@ public:
 
 	static int Tab;
 
-	//static std::shared_ptr<IoStoreWriter> Writer;
-	//static std::shared_ptr<IoStoreWriter> SecondWriter;
-
 	static FLoadout	Loadout;
 	static std::vector<FLoadout> Loadouts;
 	static ECosmeticState CosmeticState;
 
 	static uint8_t* SearchArray;
 	static uint8_t* ReplaceArray;
-
-	static std::vector<FFileModification> FileModifications;
-
-	static std::string Channel;
-	static std::string Variant;
 
 	static bool Paid;
 
@@ -44,4 +37,6 @@ public:
 	static bool HasInitializedCurl;
 
 	static FPluginModel SelectedPlugin;
+
+	static TSharedPtr<FFileProvider> Provider;
 };

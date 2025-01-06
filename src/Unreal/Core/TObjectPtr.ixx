@@ -7,6 +7,7 @@ export module Saturn.Core.TObjectPtr;
 export template<typename ObjectType>
 class TObjectPtr {
     TSharedPtr<ObjectType> Val;
+    template <typename T> friend class TObjectPtr;
 public:
     TObjectPtr() : Val(nullptr) {}
     TObjectPtr(std::nullptr_t Null) : Val(nullptr) {}
@@ -17,6 +18,16 @@ public:
     __forceinline TObjectPtr operator=(TSharedPtr<ObjectType> Other) {
         Val = Other;
         return *this;
+    }
+
+    template <typename OtherType>
+    __forceinline TObjectPtr operator=(TObjectPtr<OtherType> Other) {
+        Val = std::static_pointer_cast<ObjectType>(Other.Val);
+        return *this;
+    }
+
+    __forceinline const TSharedPtr<ObjectType>& GetSharedPtr() const {
+        return Val;
     }
 
     template <typename T>
@@ -47,11 +58,6 @@ public:
 
     template <typename T>
     __forceinline bool IsA() {
-        return std::dynamic_pointer_cast<T>(Val);
-    }
-
-    template <typename T>
-    __forceinline TSharedPtr<T> As() {
         return std::dynamic_pointer_cast<T>(Val);
     }
 

@@ -1,6 +1,7 @@
 #include <DiscordSDK/rapidjson/document.h>
 #include <Crypt/skCrypter.h>
 
+#include "Saturn/Log.h"
 #include "Saturn/Defines.h"
 
 #include <windows.h>
@@ -9,18 +10,26 @@
 #include <winbase.h>
 #include <ShlObj_core.h>
 
-#include <string>
-#include <fstream>
-#include <sstream>
-#include <filesystem>
-
 import Saturn.FortniteFunctionLibrary;
 
+import <string>;
+import <vector>;
+import <fstream>;
+import <sstream>;
+import <filesystem>;
+
+import Saturn.Config;
 import Saturn.Context;
 import Saturn.Structs.FileInfo;
 import Saturn.Readers.FileReader;
+import Saturn.Items.LoadoutModel;
+import Saturn.Paths.SoftObjectPath;
+import Saturn.IoStore.IoStoreReader;
 import Saturn.WindowsFunctionLibrary;
-import Saturn.Config;
+import Saturn.Structs.IoOffsetLength;
+import Saturn.Toc.IoContainerSettings;
+import Saturn.Readers.ZenPackageReader;
+import Saturn.Structs.IoStoreTocResource;
 
 std::string FortniteFunctionLibrary::GetFortniteInstallationPath() {
 	static const std::string DRIVES[] = { "A:\\", "B:\\", "C:\\", "D:\\", "E:\\", "F:\\", "G:\\", "H:\\", "I:\\", "J:\\", "K:\\", "L:\\", "M:\\" };
@@ -75,6 +84,37 @@ std::string FortniteFunctionLibrary::GetFortniteAESKey() {
 	}
 }
 
+std::tuple<std::string, std::string> FortniteFunctionLibrary::GetFortniteMappingsURL()
+{
+	static std::tuple<int, std::string> stringData = WindowsFunctionLibrary::GetRequest("https://fortnitecentral.genxgames.gg/api/v1/mappings");
+
+	if (std::get<0>(stringData) != 200) {
+		return { "ERROR", "ERROR" };
+	}
+
+	rapidjson::Document json;
+	json.Parse(std::get<1>(stringData).c_str());
+
+	if (json.HasParseError() || !json.IsArray()) {
+		return { "ERROR", "ERROR" };
+	}
+
+	for (const auto& item : json.GetArray()) {
+		if (item.HasMember("url") && item.HasMember("fileName") && item.HasMember("meta") && item["meta"].HasMember("compressionMethod")) {
+			std::string compressionMethod = item["meta"]["compressionMethod"].GetString();
+
+			if (compressionMethod == "Oodle" || compressionMethod == "None") {
+				return {
+					item["url"].GetString(),
+					item["fileName"].GetString()
+				};
+			}
+		}
+	}
+
+	return { "ERROR", "ERROR" };
+}
+
 std::wstring FortniteFunctionLibrary::GetFortniteLocalPath() {
 	std::wstringstream ss;
 
@@ -89,175 +129,232 @@ std::wstring FortniteFunctionLibrary::GetFortniteLocalPath() {
 }
 
 bool FortniteFunctionLibrary::PatchEpicGames() {
-	static bool bHasOccurred = false;
-	if (bHasOccurred) return true;
-	bHasOccurred = true;
-
-	static std::vector<uint8_t> NOTIFICATION_PATTERN = { 0x44,0x3A,0x5C,0x62,0x75,0x69,0x6C,0x64,0x5C,0x2B,0x2B,0x50,0x6F,0x72,0x74,0x61,0x6C,0x5C,0x53,0x79,0x6E,0x63,0x5C,0x50,0x6F,0x72,0x74,0x61,0x6C,0x5C,0x53,0x6F,0x75,0x72,0x63,0x65,0x5C,0x50,0x72,0x6F,0x67,0x72,0x61,0x6D,0x73,0x5C,0x45,0x70,0x69,0x63,0x47,0x61,0x6D,0x65,0x73,0x4C,0x61,0x75,0x6E,0x63,0x68,0x65,0x72,0x5C,0x4C,0x61,0x79,0x65,0x72,0x73,0x5C,0x44,0x61,0x74,0x61,0x41,0x63,0x63,0x65,0x73,0x73,0x5C,0x50,0x75,0x62,0x6C,0x69,0x63,0x5C,0x4E,0x6F,0x74,0x69,0x66,0x69,0x63,0x61,0x74,0x69,0x6F,0x6E,0x2E,0x68,0x00,0x21,0x47,0x65,0x74,0x50,0x65,0x72,0x73,0x69,0x73,0x74,0x28,0x29 };
-	static std::vector<uint8_t> VERIFICATION_PATTERN = { 0x44,0x3A,0x2F,0x62,0x75,0x69,0x6C,0x64,0x2F,0x2B,0x2B,0x50,0x6F,0x72,0x74,0x61,0x6C,0x2F,0x53,0x79,0x6E,0x63,0x2F,0x45,0x6E,0x67,0x69,0x6E,0x65,0x2F,0x53,0x6F,0x75,0x72,0x63,0x65,0x2F,0x52,0x75,0x6E,0x74,0x69,0x6D,0x65,0x2F,0x43,0x6F,0x72,0x65,0x2F,0x50,0x72,0x69,0x76,0x61,0x74,0x65,0x2F,0x57,0x69,0x6E,0x64,0x6F,0x77,0x73,0x2F,0x57,0x69,0x6E,0x64,0x6F,0x77,0x73,0x45,0x72,0x72,0x6F,0x72,0x4F,0x75,0x74,0x70,0x75,0x74,0x44,0x65,0x76,0x69,0x63,0x65,0x2E,0x63,0x70,0x70 };
-
-	try {
-		std::string filePath = _("C:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe");
-		if (!std::filesystem::exists(filePath)) {
-			filePath = _("D:\\Program Files (x86)\\Epic Games\\Launcher\\Portal\\Binaries\\Win64\\EpicGamesLauncher.exe");
-		}
-
-		FFileReader reader(filePath.c_str());
-		reader.Seek(reader.TotalSize() - 6);
-
-		static std::string TamelySig = "Tamely";
-		char data[6];
-
-		reader.Serialize(data, 6);
-
-		if (std::string(data) != TamelySig) {
-			char diffData[59];
-			memset(diffData, 0, 59);
-
-			reader.Seek(reader.TotalSize());
-			reader.WriteBuffer((char*)TamelySig.c_str(), 6);
-
-			size_t offset = WindowsFunctionLibrary::FindArrayInFile(&reader.FileStream, NOTIFICATION_PATTERN) + NOTIFICATION_PATTERN.size();
-			reader.Seek(offset);
-			reader.WriteBuffer(diffData, 59);
-
-			offset = WindowsFunctionLibrary::FindArrayInFile(&reader.FileStream, VERIFICATION_PATTERN) + VERIFICATION_PATTERN.size();
-			reader.Seek(offset);
-			reader.WriteBuffer(diffData, 59);
-		}
-
-		reader.Close();
-
-		return true;
-	}
-	catch (std::exception e) {
-		return false;
-	}
+	return false;
 }
 
-bool FortniteFunctionLibrary::PatchFortnite() {
+bool FortniteFunctionLibrary::PatchFortnite(const FLoadout& Loadout) {
 	FortniteFunctionLibrary::KillEpicProcesses();
 
-	/*
-	try {
-		uint8_t* asset = ASSET_DATA;
+	if (FConfig::bHasSwappedSkin) {
+		LOG_INFO("Creating backup directory");
+		std::wstring BackupDirectoryW = WindowsFunctionLibrary::GetSaturnLocalPath() + L"\\TocBackups\\";
+		std::string BackupDirectory = std::string(BackupDirectoryW.begin(), BackupDirectoryW.end());
 
-		for (int i = 0; i < 5; i++) {
-			std::string id;
-			uint8_t* searchId = nullptr;
-			uint8_t* replaceId = nullptr;
-			int replaceLength = 0;
+		WindowsFunctionLibrary::MakeDirectory(BackupDirectoryW);
 
-			switch (i) {
-			case 0:
-				if (!FContext::Loadout.Skin.IsValid()) {
-					continue;
-				}
 
-				searchId = new uint8_t[]{ 0x2F,0x47,0x61,0x6D,0x65,0x2F,0x54,0x68,0x69,0x73,0x2F,0x53,0x68,0x6F,0x75,0x6C,0x64,0x2F,0x42,0x65,0x2F,0x4C,0x6F,0x6E,0x67,0x2F,0x45,0x6E,0x6F,0x75,0x67,0x68,0x2F,0x54,0x6F,0x2F,0x53,0x77,0x61,0x70,0x2F,0x57,0x69,0x74,0x68,0x2F,0x41,0x6E,0x79,0x2F,0x43,0x6F,0x73,0x6D,0x65,0x74,0x69,0x63,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72,0x2F,0x43,0x68,0x61,0x72,0x61,0x63,0x74,0x65,0x72,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72 };
+		LOG_INFO("Getting all TOCs from backup directory");
 
-				replaceLength = 203;
-				replaceId = new uint8_t[203];
-				memset(replaceId, 0, 203);
-
-				id = FContext::Loadout.Skin.PackagePath + "." + FContext::Loadout.Skin.Id;
-				break;
-			case 1:
-				if (!FContext::Loadout.Backbling.IsValid()) {
-					continue;
-				}
-
-				searchId = new uint8_t[]{ 0x2F,0x47,0x61,0x6D,0x65,0x2F,0x54,0x68,0x69,0x73,0x2F,0x53,0x68,0x6F,0x75,0x6C,0x64,0x2F,0x42,0x65,0x2F,0x4C,0x6F,0x6E,0x67,0x2F,0x45,0x6E,0x6F,0x75,0x67,0x68,0x2F,0x54,0x6F,0x2F,0x53,0x77,0x61,0x70,0x2F,0x57,0x69,0x74,0x68,0x2F,0x41,0x6E,0x79,0x2F,0x43,0x6F,0x73,0x6D,0x65,0x74,0x69,0x63,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72,0x2F,0x42,0x61,0x63,0x6B,0x70,0x61,0x63,0x6B,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72 };
-
-				replaceLength = 202;
-				replaceId = new uint8_t[202];
-				memset(replaceId, 0, 202);
-
-				id = FContext::Loadout.Backbling.PackagePath + "." + FContext::Loadout.Backbling.Id;
-				break;
-			case 2:
-				if (!FContext::Loadout.Pickaxe.IsValid()) {
-					continue;
-				}
-
-				searchId = new uint8_t[]{ 0x2F,0x47,0x61,0x6D,0x65,0x2F,0x54,0x68,0x69,0x73,0x2F,0x53,0x68,0x6F,0x75,0x6C,0x64,0x2F,0x42,0x65,0x2F,0x4C,0x6F,0x6E,0x67,0x2F,0x45,0x6E,0x6F,0x75,0x67,0x68,0x2F,0x54,0x6F,0x2F,0x53,0x77,0x61,0x70,0x2F,0x57,0x69,0x74,0x68,0x2F,0x41,0x6E,0x79,0x2F,0x43,0x6F,0x73,0x6D,0x65,0x74,0x69,0x63,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72,0x2F,0x50,0x69,0x63,0x6B,0x61,0x78,0x65,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72,0x2F,0x4F,0x77,0x65,0x6E,0x2F,0x49,0x73,0x2F,0x54,0x68,0x65,0x2F,0x42,0x65,0x73,0x74,0x2F,0x44,0x65,0x76,0x65,0x6C,0x6F,0x70,0x65,0x72 };
-
-				replaceLength = 201;
-				replaceId = new uint8_t[201];
-				memset(replaceId, 0, 201);
-
-				id = FContext::Loadout.Pickaxe.PackagePath + "." + FContext::Loadout.Pickaxe.Id;
-				break;
-			case 3:
-				if (FContext::Channel == "") {
-					continue;
-				}
-
-				searchId = new uint8_t[]{ 0x54,0x68,0x69,0x73,0x2E,0x56,0x61,0x72,0x69,0x61,0x6E,0x74,0x2E,0x43,0x68,0x61,0x6E,0x6E,0x65,0x6C,0x2E,0x54,0x61,0x67,0x2E,0x53,0x68,0x6F,0x75,0x6C,0x64,0x2E,0x42,0x65,0x2E,0x4C,0x6F,0x6E,0x67,0x2E,0x45,0x6E,0x6F,0x75,0x67,0x68,0x2E,0x46,0x6F,0x72,0x2E,0x41,0x6E,0x79,0x2E,0x47,0x61,0x6D,0x65,0x70,0x6C,0x61,0x79,0x2E,0x54,0x61,0x67 };
-
-				replaceLength = 67;
-				replaceId = new uint8_t[67];
-				memset(replaceId, 0, 67);
-
-				id = FContext::Channel;
-				break;
-			case 4:
-				if (FContext::Variant == "") {
-					continue;
-				}
-
-				searchId = new uint8_t[]{ 0x54,0x68,0x69,0x73,0x2E,0x43,0x75,0x73,0x74,0x6F,0x6D,0x69,0x7A,0x61,0x74,0x69,0x6F,0x6E,0x2E,0x56,0x61,0x72,0x69,0x61,0x6E,0x74,0x2E,0x54,0x61,0x67,0x2E,0x53,0x68,0x6F,0x75,0x6C,0x64,0x2E,0x42,0x65,0x2E,0x4C,0x6F,0x6E,0x67,0x2E,0x45,0x6E,0x6F,0x75,0x67,0x68,0x2E,0x46,0x6F,0x72,0x2E,0x41,0x6E,0x79,0x2E,0x47,0x61,0x6D,0x65,0x70,0x6C,0x61,0x79,0x2E,0x54,0x61,0x67 };
-
-				replaceLength = 73;
-				replaceId = new uint8_t[73];
-				memset(replaceId, 0, 73);
-
-				id = FContext::Variant;
-				break;
-			}
-
-			memcpy(replaceId, id.c_str(), id.size());
-
-			uint8_t* searchOffset = WindowsFunctionLibrary::FindSubArray(asset, ASSET_LENGTH, searchId, replaceLength);
-			memcpy(searchOffset, replaceId, replaceLength);
-
-			delete[] searchId;
-			delete[] replaceId;
+		std::vector<std::string> backedUpTOCs = WindowsFunctionLibrary::GetFilesInDirectory(BackupDirectory);
+		for (std::string& toc : backedUpTOCs) {
+			WindowsFunctionLibrary::RenameFile(BackupDirectory + toc, GetFortniteInstallationPath() + toc);
+			LOG_INFO("Moved TOC from '{0}' to '{1}'.", BackupDirectory + toc, GetFortniteInstallationPath() + toc);
 		}
 
-		std::shared_ptr<IoStoreReader> reader = std::make_shared<IoStoreReader>(FortniteFunctionLibrary::GetFortniteInstallationPath() + _("pakchunk10-WindowsClient.utoc"));
-		FContext::Writer = std::make_shared<IoStoreWriter>(reader);
-
-		bool hasBeenDone = FConfig::UcasSize != INT64_MAX;
-		FContext::Writer->OverwriteFileWithBouncer(_("../../../FortniteGame/Content/Athena/HUD/AthenaScoreAlert.uasset"), _("../../../FortniteGame/Content/Characters/Enemies/Husk_Deimos_Husky/Textures/T_Husk_Deimos_Husky_03_Gold_D.ubulk"), asset, ASSET_LENGTH);
-
-		if (!hasBeenDone) {
-			std::shared_ptr<IoStoreReader> reader2 = std::make_shared<IoStoreReader>(FortniteFunctionLibrary::GetFortniteInstallationPath() + _("pakchunk20-WindowsClient.utoc"));
-			FContext::SecondWriter = std::make_shared<IoStoreWriter>(reader2);
-
-			FContext::SecondWriter->InvalidateFile(_("../../../FortniteGame/Content/Athena/Heroes/Meshes/Bodies/CP_Athena_Body_F_Prime_A.uasset")); // 20
-			FContext::Writer->InvalidateFile(_("../../../FortniteGame/Plugins/GameFeatures/BRCosmetics/Content/Athena/Heroes/Meshes/Bodies/CP_Athena_Body_F_Prime_B.uasset")); // 10
-			FContext::Writer->InvalidateFile(_("../../../FortniteGame/Plugins/GameFeatures/BRCosmetics/Content/Athena/Heroes/Meshes/Bodies/CP_Athena_Body_F_Prime_C.uasset")); // 10
-			FContext::Writer->InvalidateFile(_("../../../FortniteGame/Plugins/GameFeatures/BRCosmetics/Content/Athena/Heroes/Meshes/Bodies/CP_Athena_Body_F_Prime.uasset")); // 10
-			FContext::Writer->InvalidateFile(_("../../../FortniteGame/Plugins/GameFeatures/BRCosmetics/Content/Athena/Heroes/Meshes/Bodies/CP_Athena_Body_F_Prime_E.uasset")); // 10
-			FContext::Writer->InvalidateFile(_("../../../FortniteGame/Plugins/GameFeatures/BRCosmetics/Content/Athena/Heroes/Meshes/Bodies/CP_Athena_Body_F_Prime_G.uasset")); // 10
-			FContext::Writer->InvalidateFile(_("../../../FortniteGame/Plugins/GameFeatures/BRCosmetics/Content/Athena/Heroes/Meshes/Bodies/CP_Athena_Body_M_Prime.uasset")); // 10
-			FContext::Writer->InvalidateFile(_("../../../FortniteGame/Plugins/GameFeatures/BRCosmetics/Content/Athena/Heroes/Meshes/Bodies/CP_Athena_Body_M_Prime_G.uasset")); // 10
-
-			reader2->Close();
-			FContext::SecondWriter->Close();
+		for (auto& [path, size] : FConfig::UcasSizes) {
+			FFileReader reader(path.c_str());
+			reader.TrimToSize(size, true);
+			reader.Close();
 		}
 
-		reader->Close();
-		FContext::Writer->Close();
-
+		LOG_INFO("Reverted!");
+		FConfig::bHasSwappedSkin = false;
+		FConfig::UcasSizes.clear();
 		FConfig::Save();
 
 		return true;
 	}
-	catch (std::exception e) {
+
+	uint8_t* asset = std::move(ASSET_DATA);
+	int UsedCharacterParts = 0;
+
+	static const std::vector<std::wstring> CharacterPartPathsToSearch = {
+		L"/Game/00000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+		L"/Game/11111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+		L"/Game/22222222222222222222222222222222222222222222222222222222222222222222222222222222222222",
+		L"/Game/33333333333333333333333333333333333333333333333333333333333333333333333333333333333333",
+		L"/Game/44444444444444444444444444444444444444444444444444444444444444444444444444444444444444"
+	};
+
+	static const std::vector<std::wstring> CharacterPartNamesToSearch = {
+		L"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+		L"111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+		L"222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222",
+		L"333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333",
+		L"444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444"
+	};
+
+	FZenPackageReader assetReader(asset, ASSET_LENGTH);
+	if (!assetReader.IsOk()) {
+		LOG_ERROR("Error patching Fortnite. Failed to load DefaultGameDataCosmetics. Error: {0}", assetReader.GetStatus().ToString());
 		return false;
-	}*/
+	}
+
+	if (FContext::Loadout.Skin.IsValid()) {
+		LOG_INFO("Loading skin '{0}'", Loadout.Skin.Name);
+		UPackagePtr package = FContext::Provider->LoadPackage(Loadout.Skin.PackagePath + ".uasset");
+		LOG_INFO("Getting first export");
+		UObjectPtr firstExport = package->GetFirstExport();
+		LOG_INFO("Got export");
+
+		std::vector<FSoftObjectPath> characterParts = firstExport->GetProperty<std::vector<FSoftObjectPath>>("BaseCharacterParts");
+		LOG_INFO("Skin '{0}' has {1} character parts!", Loadout.Skin.Name, characterParts.size());
+
+		for (FSoftObjectPath& charPart : characterParts) {
+			if (UsedCharacterParts > CharacterPartNamesToSearch.size() - 1) {
+				LOG_ERROR("Ran out of useable character part searches!");
+				break;
+			}
+
+			std::string packageName = charPart.GetAssetPath().GetPackageName();
+			std::string assetName = charPart.GetAssetPath().GetAssetName();
+
+			std::wstring packageNameW = std::wstring(packageName.begin(), packageName.end());
+			std::wstring assetNameW = std::wstring(assetName.begin(), assetName.end());
+
+			assetReader.GetNameMap().SetName(CharacterPartPathsToSearch[UsedCharacterParts], packageNameW);
+			assetReader.GetNameMap().SetName(CharacterPartNamesToSearch[UsedCharacterParts++], assetNameW);
+		}
+
+		uint8_t* originalAsset = std::move(ASSET_DATA);
+		std::vector<uint8_t> originalBuffer(originalAsset, originalAsset + ASSET_LENGTH);
+		std::vector<uint8_t> bufferToWrite = assetReader.SerializeAsByteArray(originalBuffer);
+
+		FIoStoreReader* reader = FContext::Provider->GetReaderByPathAndExtension("/Game/Balance/DefaultGameDataCosmetics.uasset");
+		uint32_t TocEntryIndex = FContext::Provider->GetTocEntryIndexByPathAndExtension("/Game/Balance/DefaultGameDataCosmetics.uasset");
+
+		FIoStoreTocResource& toc = reader->GetTocResource();
+
+		TIoStatusOr<FIoStoreTocChunkInfo> chunkStatus = reader->GetChunkInfo(TocEntryIndex);
+		if (!chunkStatus.IsOk()) {
+			LOG_ERROR("Failed to load DefaultGameDataCosmetics");
+			return false;
+		}
+
+		FIoStoreTocChunkInfo chunkInfo = chunkStatus.ConsumeValueOrDie();
+		FIoChunkId chunkId = chunkInfo.Id;
+
+		FIoOffsetAndLength* offsetAndLength = reader->GetOffsetAndLength(chunkId);
+
+		const int32_t FirstBlockIndex = int32_t(offsetAndLength->GetOffset() / toc.Header.CompressionBlockSize);
+
+		int32_t newBlockCount = (bufferToWrite.size() - 1) / toc.Header.CompressionBlockSize + 1;
+
+		std::vector<std::string> containerPaths;
+		reader->GetContainerFilePaths(containerPaths);
+
+		int idx = WindowsFunctionLibrary::FindSmallestFileSizeIndex(containerPaths);
+		std::string ContainerPath = containerPaths[idx];
+
+		FFileReader Ar(ContainerPath.c_str());
+		FConfig::UcasSizes.insert_or_assign(ContainerPath, Ar.TotalSize());
+		Ar.Seek(Ar.TotalSize());
+		LOG_INFO("Opened container '{0}' at offset {1}", ContainerPath, Ar.Tell());
+
+		for (int i = 0; i < newBlockCount; i++) {
+			int32_t blockBufferLen = bufferToWrite.size() - i * toc.Header.CompressionBlockSize > toc.Header.CompressionBlockSize
+				? toc.Header.CompressionBlockSize
+				: bufferToWrite.size() - i * toc.Header.CompressionBlockSize;
+
+			int64_t Offset = Ar.Tell();
+
+			toc.CompressionBlocks[FirstBlockIndex + i] = FIoStoreTocCompressedBlockEntry();
+			toc.CompressionBlocks[FirstBlockIndex + i].SetOffset(Offset + ((toc.Header.PartitionCount - 1) * toc.Header.PartitionSize));
+			toc.CompressionBlocks[FirstBlockIndex + i].SetCompressedSize(blockBufferLen);
+			toc.CompressionBlocks[FirstBlockIndex + i].SetUncompressedSize(blockBufferLen);
+			toc.CompressionBlocks[FirstBlockIndex + i].SetCompressionMethodIndex(0);
+
+			uint8_t* blockBuffer = new uint8_t[blockBufferLen];
+			memcpy(blockBuffer, bufferToWrite.data() + (i * toc.Header.CompressionBlockSize), blockBufferLen);
+
+			if (!Ar.WriteBuffer(blockBuffer, blockBufferLen)) {
+				LOG_ERROR("Failed to write block buffer");
+				return false;
+			}
+
+			uint64_t Padding = 0;
+			Ar.WriteBuffer(&Padding, sizeof(uint64_t));
+
+			delete[] blockBuffer;
+		}
+
+		Ar.Close();
+
+		std::string containerName = reader->GetContainerName();
+		toc.ChunkOffsetAndLengths[TocEntryIndex].SetLength(bufferToWrite.size());
+
+		FIoContainerSettings containerSettings;
+		containerSettings.ContainerId = toc.Header.ContainerId;
+		containerSettings.ContainerFlags = toc.Header.ContainerFlags;
+		containerSettings.EncryptionKeyGuid = toc.Header.EncryptionKeyGuid;
+
+		uint64_t size = 0;
+		FIoStatus status = FIoStoreTocResource::Write(GetFortniteInstallationPath() + containerName + ".utoc.tamely", toc, toc.Header.CompressionBlockSize, toc.Header.PartitionSize, containerSettings, size);
+		if (!status.IsOk()) {
+			LOG_ERROR("Failed to make toc. Error {0}", status.ToString());
+			return false;
+		}
+		else {
+			LOG_INFO("Creating backup directory");
+			std::wstring BackupDirectoryW = WindowsFunctionLibrary::GetSaturnLocalPath() + L"\\TocBackups\\";
+			std::string BackupDirectory = std::string(BackupDirectoryW.begin(), BackupDirectoryW.end());
+
+			WindowsFunctionLibrary::MakeDirectory(BackupDirectoryW);
+			LOG_INFO("Moving TOC to backup directory");
+			WindowsFunctionLibrary::RenameFile(GetFortniteInstallationPath() + containerName + ".utoc", BackupDirectory + containerName + ".utoc");
+			LOG_INFO("Moving new TOC to old position");
+			WindowsFunctionLibrary::RenameFile(GetFortniteInstallationPath() + containerName + ".utoc.tamely", GetFortniteInstallationPath() + containerName + ".utoc");
+			LOG_INFO("Added fallback parts!");
+		}
+
+		reader = FContext::Provider->GetReaderByPathAndExtension("/BRCosmetics/Athena/Heroes/Meshes/Bodies/CP_Athena_Body_F_Prime.uasset");
+		TocEntryIndex = FContext::Provider->GetTocEntryIndexByPathAndExtension("/BRCosmetics/Athena/Heroes/Meshes/Bodies/CP_Athena_Body_F_Prime.uasset");
+		chunkStatus = reader->GetChunkInfo(TocEntryIndex);
+		if (!chunkStatus.IsOk()) {
+			LOG_ERROR("Failed to load CP_Athena_Body_F_Prime");
+			return false;
+		}
+
+		chunkInfo = chunkStatus.ConsumeValueOrDie();
+		FIoChunkId defaultChunkId = chunkInfo.Id;
+
+		toc = reader->GetTocResource();
+
+		for (auto& tocChunkId : toc.ChunkIds) {
+			if (tocChunkId == defaultChunkId) {
+				tocChunkId = CreateIoChunkId(0, tocChunkId.GetChunkIndex(), tocChunkId.GetChunkType());
+				break;
+			}
+		}
+
+		containerSettings.ContainerId = toc.Header.ContainerId;
+		containerSettings.ContainerFlags = toc.Header.ContainerFlags;
+		containerSettings.EncryptionKeyGuid = toc.Header.EncryptionKeyGuid;
+
+		size = 0;
+		status = FIoStoreTocResource::Write(GetFortniteInstallationPath() + reader->GetContainerName() + ".utoc.tamely", toc, toc.Header.CompressionBlockSize, toc.Header.PartitionSize, containerSettings, size);
+		if (!status.IsOk()) {
+			LOG_ERROR("Failed to make toc. Error {0}", status.ToString());
+			return false;
+		}
+		else {
+			LOG_INFO("Creating backup directory");
+			std::wstring BackupDirectoryW = WindowsFunctionLibrary::GetSaturnLocalPath() + L"\\TocBackups\\";
+			std::string BackupDirectory = std::string(BackupDirectoryW.begin(), BackupDirectoryW.end());
+
+			WindowsFunctionLibrary::MakeDirectory(BackupDirectoryW);
+			LOG_INFO("Moving TOC to backup directory");
+			WindowsFunctionLibrary::RenameFile(GetFortniteInstallationPath() + reader->GetContainerName() + ".utoc", BackupDirectory + reader->GetContainerName() + ".utoc");
+			LOG_INFO("Moving new TOC to old position");
+			WindowsFunctionLibrary::RenameFile(GetFortniteInstallationPath() + reader->GetContainerName() + ".utoc.tamely", GetFortniteInstallationPath() + reader->GetContainerName() + ".utoc");
+			LOG_INFO("Invalidated default");
+			LOG_INFO("Converted!");
+
+			FConfig::bHasSwappedSkin = true;
+		}
+	}
+
+	FConfig::Save();
 	return true;
 }
 

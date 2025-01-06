@@ -4,11 +4,12 @@ module;
 
 export module Saturn.Core.UObject;
 
-import Saturn.Reflection.FProperty;
 import <string>;
 import <vector>;
 import <optional>;
-import Saturn.Core.TObjectPtr;
+
+export import Saturn.Core.TObjectPtr;
+import Saturn.Reflection.FProperty;
 
 export typedef TObjectPtr<class UObject> UObjectPtr;
 export typedef TObjectPtr<class UClass> UClassPtr;
@@ -17,9 +18,10 @@ export typedef TObjectPtr<class UStruct> UStructPtr;
 export class UObject : public std::enable_shared_from_this<UObject> {
 public:
     UObject() = default;
+    TSharedPtr<class FPackageIndex> Index;
 
-    //friend class UZenPackage;
-    //friend struct FUnversionedSerializer;
+    friend class UZenPackage;
+    friend class FZenPackageReader;
 
     enum EObjectFlags
     {
@@ -128,7 +130,7 @@ public:
     }
 
     virtual void Load() {}
-    virtual void Serialize(class FArchive& Ar);
+    virtual void Serialize(class FZenPackageReader& Ar);
 
     template <typename T>
     std::optional<T> TryGetProperty(std::string PropertyName) {
@@ -164,11 +166,12 @@ public:
         return PropertyLink;
     }
 
-    void SerializeScriptProperties(class FArchive& Ar, UObjectPtr Object);
-    TUniquePtr<IPropValue> SerializeItem(class FArchive& Ar);
+    void SerializeScriptProperties(class FZenPackageReader& Ar, UObjectPtr Object);
+    TUniquePtr<IPropValue> SerializeItem(class FZenPackageReader& Ar, enum class ESerializationMode SerializationMode);
 };
 
 export class UClass : public UStruct {
 public:
     friend class UObject;
+    friend class Mappings;
 };

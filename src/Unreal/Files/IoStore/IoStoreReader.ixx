@@ -21,6 +21,7 @@ import Saturn.Misc.IoReadOptions;
 import Saturn.Structs.IoContainerId;
 import Saturn.IoStore.IoDirectoryIndex;
 import Saturn.Structs.IoContainerFlags;
+import Saturn.Structs.IoStoreTocResource;
 import Saturn.Structs.IoStoreTocChunkInfo;
 import Saturn.Container.IoStoreCompressedReadResult;
 
@@ -35,11 +36,14 @@ public:
     EIoContainerFlags GetContainerFlags() const;
     FGuid GetEncryptionKeyGuid() const;
     int32_t GetChunkCount() const;
-    std::string GetContainerName() const; // The container name is the babse filename of ContainerPath, e.g. "global"
+    std::string GetContainerName() const; // The container name is the base filename of ContainerPath, e.g. "global"
 
     void EnumerateChunks(std::function<bool(FIoStoreTocChunkInfo&&)>&& Callback) const;
     TIoStatusOr<FIoStoreTocChunkInfo> GetChunkInfo(const FIoChunkId& Chunk) const;
     TIoStatusOr<FIoStoreTocChunkInfo> GetChunkInfo(const uint32_t TocEntryIndex) const;
+
+    FIoStoreTocResource& GetTocResource();
+    struct FIoOffsetAndLength* GetOffsetAndLength(struct FIoChunkId& ChunkId);
 
     // Reads the chunk off the disk, decryption/decompressing as necessary.
     TIoStatusOr<FIoBuffer> Read(const FIoChunkId& Chunk, const FIoReadOptions& Options) const;
@@ -57,6 +61,7 @@ public:
 
     // TMap<{xxhashed file path}, TocEntryIndex>
     void GetFiles(TMap<uint64_t, uint32_t>& OutFileList) const;
+    void GetFiles(std::vector<std::pair<std::string, uint32_t>>& OutFileList) const;
     void GetFilenamesbyBlockIndex(const std::vector<int32_t>& InBlockIndexList, std::vector<std::string>& OutFileList) const;
     void GetFilenames(std::vector<std::string>& OutFileList) const;
 

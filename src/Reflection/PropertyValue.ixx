@@ -5,6 +5,7 @@ import <string>;
 import <vector>;
 
 import Saturn.Core.TObjectPtr;
+import Saturn.Paths.SoftObjectPath;
 
 template <class, template <class> class>
 struct is_t : public std::false_type {};
@@ -63,7 +64,7 @@ constexpr EPropertyType GetPropertyType() {
     if constexpr (is_t<T, TObjectPtr>::value) return EPropertyType::ObjectProperty;
     if constexpr (std::is_same<T, class FName>()) return EPropertyType::NameProperty;
     if constexpr (std::is_same<T, class FScriptDelegate>()) return EPropertyType::DelegateProperty;
-    if constexpr (std::is_same<T, class FSoftObjectPath>()) return EPropertyType::SoftObjectProperty;
+    if constexpr (std::is_same<T, FSoftObjectPath>()) return EPropertyType::SoftObjectProperty;
     if constexpr (std::is_same<T, double>()) return EPropertyType::DoubleProperty;
     if constexpr (std::is_same<T, std::string>()) return EPropertyType::StrProperty;
     if constexpr (std::is_same<T, class Text>()) return EPropertyType::TextProperty;
@@ -81,19 +82,20 @@ constexpr EPropertyType GetPropertyType() {
     return EPropertyType::Unknown;
 }
 
+export enum class ESerializationMode : uint8_t {
+    Zero,
+    Normal,
+    Map,
+    Array
+};
+
 export class IPropValue {
 protected:
     int ValueTypeSize = 0;
 public:
-    enum class ESerializationMode : uint8_t {
-        Zero,
-        Normal,
-        Map
-    };
-
     virtual bool IsAcceptableType(EPropertyType Type) = 0;
     virtual void PlaceValue(EPropertyType Type, void* OutBuffer) = 0;
-    virtual void Write(class FArchive& Ar, ESerializationMode SerializationMode = ESerializationMode::Normal) = 0;
+    virtual void Write(class FZenPackageReader& Ar, ESerializationMode SerializationMode = ESerializationMode::Normal) = 0;
 
     template <typename T>
     std::optional<T> TryGetValue() {

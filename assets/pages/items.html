@@ -15,7 +15,7 @@
           <div class="modal-icon"></div>
           <div class="modal-textbox">
               <h1>Swap this item?</h1>
-              <p>Reminder: All items swap default, but you MUST go into a match for it to load.</p>
+              <p>Reminder: All skins swap Default (Ramirez Style)</p>
           </div>
 
           <div class="modal-buttons">
@@ -25,9 +25,24 @@
       </div>
     </div>
 
+    <div class ="modal minimized" id="revert-modal">
+      <div class="modal-window">
+          <div class="modal-icon"></div>
+          <div class="modal-textbox">
+              <h1>Revert your swap?</h1>
+              <p>Saturn detected you already have this cosmetic type swapped</p>
+          </div>
+
+          <div class="modal-buttons">
+              <div class="modal-button" onclick="saturn.modalManager.hideModal('revert')">Cancel</div>
+              <div class="modal-button" id="ok-button" onclick="saturn.itemManager.addLoadoutItem()">Revert</div>
+          </div>
+      </div>
+    </div>
+
     <div id="nav">
         <h2 onclick="SendToHome()"><i class="fas fa-arrow-alt-circle-left"></i> Back</h2>
-        <h1>Saturn 3.0.0</h1>
+        <h1>Saturn 3.0.1</h1>
     </div>
 
     <div id="container" class="no-scrollbar"></div>

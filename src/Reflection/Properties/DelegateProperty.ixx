@@ -1,13 +1,13 @@
 module;
 
+#include "Saturn/Log.h"
 #include "Saturn/Defines.h"
 
 export module Saturn.Properties.DelegateProperty;
 
+import Saturn.Readers.ZenPackageReader;
 export import Saturn.Reflection.FProperty;
 import Saturn.Delegates.MulticastScriptDelegate;
-
-import Saturn.Readers.FArchive;
 
 export class FDelegateProperty : public FProperty {
 public:
@@ -28,12 +28,14 @@ public:
             }
         }
 
-        void Write(FArchive& Ar, ESerializationMode SerializationMode = ESerializationMode::Normal) override {}
+        void Write(FZenPackageReader& Ar, ESerializationMode SerializationMode = ESerializationMode::Normal) override {}
     };
 
-    TUniquePtr<class IPropValue> Serialize(FArchive& Ar) override {
+    TUniquePtr<class IPropValue> Serialize(FZenPackageReader& Ar, ESerializationMode SerializationMode = ESerializationMode::Normal) override {
         auto Ret = std::make_unique<Value>();
         Ar << Ret->Delegate;
+
+        LOG_TRACE("Serialized DelegateProperty with object {0} and function {1}", Ret->Delegate.GetObjectPtr()->GetName(), Ret->Delegate.GetFunctionName());
         
         return std::move(Ret);
     }
@@ -55,12 +57,14 @@ public:
             }
         }
 
-        void Write(FArchive& Ar, ESerializationMode SerializationMode = ESerializationMode::Normal) override {}
+        void Write(FZenPackageReader& Ar, ESerializationMode SerializationMode = ESerializationMode::Normal) override {}
     };
 
-    TUniquePtr<class IPropValue> Serialize(FArchive& Ar) override {
+    TUniquePtr<class IPropValue> Serialize(FZenPackageReader& Ar, ESerializationMode SerializationMode = ESerializationMode::Normal) override {
         auto Ret = std::make_unique<Value>();
         Ar << Ret->Delegate;
+
+        LOG_TRACE("Serialized MulticastDelegateProperty with function {0}", Ret->Delegate.GetInvocationList().size());
         
         return std::move(Ret);
     }

@@ -1,6 +1,7 @@
 #include <curl/curl.h>
 #include <LodePNG/lodepng.h>
 #include <Crypt/skCrypter.h>
+#include <Saturn/Log.h>
 
 #include <map>
 #include <sstream>
@@ -17,6 +18,7 @@ import <tuple>;
 import <string>;
 import <vector>;
 import <fstream>;
+import <algorithm>;
 
 size_t WriteFunction(void* ptr, size_t size, size_t nmemb, std::string* data) {
 	data->append((char*)ptr, size * nmemb);
@@ -38,7 +40,7 @@ std::tuple<long, std::string> WindowsFunctionLibrary::GetRequest(const std::stri
 	if (curl) {
 		curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
 		curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
-		curl_easy_setopt(curl, CURLOPT_USERAGENT, "Saturn/3.0.0");
+		curl_easy_setopt(curl, CURLOPT_USERAGENT, "Saturn/3.0.1");
 		curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 50L);
 		curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
 
@@ -76,7 +78,7 @@ std::tuple<long, std::string> WindowsFunctionLibrary::GetRequestSaturn(const std
 	if (curl) {
 		curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
 		curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
-		curl_easy_setopt(curl, CURLOPT_USERAGENT, "Saturn/3.0.0");
+		curl_easy_setopt(curl, CURLOPT_USERAGENT, "Saturn/3.0.1");
 		curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 50L);
 		curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
 
@@ -589,5 +591,95 @@ void WindowsFunctionLibrary::DownloadFile(const std::string& directory, const st
 	else {
 		MessageBoxW(nullptr, L"URL cannot be empty!", L"WindowsFunctionLibrary::DownloadFile", NULL);
 		return;
+	}
+}
+
+int WindowsFunctionLibrary::FindSmallestFileSizeIndex(const std::vector<std::string>& FilePaths) {
+	if (FilePaths.empty()) {
+		return -1; 
+	}
+
+	uintmax_t smallestSize = UINT64_MAX;
+	int smallestIndex = -1;
+
+	for (int i = 0; i < FilePaths.size(); ++i) {
+		try {
+			uintmax_t fileSize = std::filesystem::file_size(FilePaths[i]);
+
+			if (fileSize < smallestSize) {
+				smallestSize = fileSize;
+				smallestIndex = i;
+			}
+		}
+		catch (const std::filesystem::filesystem_error& e) {
+			LOG_ERROR("Error accessing file: {0} - {1}", FilePaths[i], e.what());
+		}
+	}
+
+	return smallestIndex;
+}
+
+void WindowsFunctionLibrary::RenameFile(const std::string& OldPath, const std::string& NewPath) {
+	try {
+		std::filesystem::rename(OldPath, NewPath);
+	}
+	catch (const std::filesystem::filesystem_error& e) {
+		LOG_ERROR("Failed to move file from '{0}' to '{1}': {2}", OldPath, NewPath, e.what());
+	}
+}
+
+std::vector<std::string> WindowsFunctionLibrary::GetFilesInDirectory(const std::string& Path) {
+	std::vector<std::string> files;
+
+	try {
+		for (const auto& entry : std::filesystem::directory_iterator(Path)) {
+			if (entry.is_regular_file()) {
+				files.push_back(entry.path().filename().string());
+			}
+		}
+	}
+	catch (const std::filesystem::filesystem_error& e) {
+		LOG_ERROR("Failed to get files in directory '{0}': {1}", Path, e.what());
+	}
+
+	return files;
+}
+
+void WindowsFunctionLibrary::TrimFileToSize(const std::string& Path, int64_t Length) {
+	try {
+		if (!std::filesystem::exists(Path)) {
+			LOG_ERROR("File '{0}' does not exist.", Path);
+			return;
+		}
+
+		int64_t currentSize = std::filesystem::file_size(Path);
+
+		if (Length > currentSize) {
+			LOG_ERROR("Cannot trim file to a larger size. Requested: {0}, Current: {1}", Length, currentSize);
+			return;
+		}
+
+		std::ofstream file(Path, std::ios::binary | std::ios::in | std::ios::out);
+		if (!file.is_open()) {
+			LOG_ERROR("Failed to open file '{0}' for trimming.", Path);
+		}
+
+#if defined(_WIN32) || defined(_WIN64)
+		file.close();
+		if (_chsize_s(fileno(fopen(Path.c_str(), "rb+")), Length) != 0) {
+			LOG_ERROR("Failed to trim file '{0}'.", Path);
+			return;
+		}
+#else
+		int fd = fileno(fopen(Path.c_str(), "rb+"));
+		if (fd == -1 || ftruncate(fd, Length) != 0) {
+			LOG_ERROR("Failed to trim file '{0}'.", Path);
+			return;
+		}
+		close(fd);
+#endif
+	}
+	catch (const std::filesystem::filesystem_error& e) {
+		LOG_ERROR("Filesystem error while trimming file '{0}': {1}.", Path, e.what());
 	}
 }

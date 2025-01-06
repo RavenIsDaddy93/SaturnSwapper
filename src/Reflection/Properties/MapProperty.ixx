@@ -1,11 +1,16 @@
 module;
 
+#include "Saturn/Log.h"
 #include "Saturn/Defines.h"
+#include "tsl/ordered_map.h"
 
 export module Saturn.Properties.MapProperty;
 
+import Saturn.Readers.ZenPackageReader;
 export import Saturn.Reflection.FProperty;
-import Saturn.Readers.FArchive;
+
+template <typename K, typename V>
+using TOrderedMap = tsl::ordered_map<K, V>;
 
 export class FMapProperty : public FProperty {
 public:
@@ -17,7 +22,7 @@ public:
     struct Value : public IPropValue {
     public:
         std::vector<TSharedPtr<class IPropValue>> KeysToRemove;
-        TMap<TSharedPtr<class IPropValue>, TSharedPtr<class IPropValue>> Value;
+        TOrderedMap<TSharedPtr<class IPropValue>, TSharedPtr<class IPropValue>> Value;
 
         __forceinline bool IsAcceptableType(EPropertyType Type) override {
             return Type == EPropertyType::MapProperty;
@@ -27,7 +32,7 @@ public:
             
         }
 
-        void Write(FArchive& Ar, ESerializationMode SerializationMode = ESerializationMode::Normal) override {
+        void Write(FZenPackageReader& Ar, ESerializationMode SerializationMode = ESerializationMode::Normal) override {
             Ar >> static_cast<uint32_t>(KeysToRemove.size());
             for (TSharedPtr<IPropValue> key : KeysToRemove) {
                 key->Write(Ar);
@@ -41,14 +46,14 @@ public:
         }
     };
 
-    TUniquePtr<class IPropValue> Serialize(FArchive& Ar) override {
+    TUniquePtr<class IPropValue> Serialize(FZenPackageReader& Ar, ESerializationMode SerializationMode = ESerializationMode::Normal) override {
         auto Ret = std::make_unique<Value>();
 
         int32_t NumKeysToRemove = 0;
         Ar << NumKeysToRemove;
 
         for (; NumKeysToRemove; --NumKeysToRemove) {
-            TUniquePtr<IPropValue> keyToRemove = KeyType->Serialize(Ar);
+            TUniquePtr<IPropValue> keyToRemove = KeyType->Serialize(Ar, ESerializationMode::Map);
             Ret->KeysToRemove.push_back(std::move(keyToRemove));
         }
 
@@ -56,10 +61,12 @@ public:
         Ar << NumEntries;
 
         for (; NumEntries; --NumEntries) {
-            TUniquePtr<IPropValue> key = KeyType->Serialize(Ar);
-            TUniquePtr<IPropValue> value = ValueType->Serialize(Ar);
+            TUniquePtr<IPropValue> key = KeyType->Serialize(Ar, ESerializationMode::Map);
+            TUniquePtr<IPropValue> value = ValueType->Serialize(Ar, ESerializationMode::Map);
             Ret->Value.insert({ std::move(key), std::move(value) });
         }
+
+        LOG_TRACE("Serialized MapProperty with length {0}", Ret->Value.size());
 
         return std::move(Ret);
     }

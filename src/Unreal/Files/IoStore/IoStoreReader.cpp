@@ -11,6 +11,7 @@ import Saturn.Misc.IoBuffer;
 import Saturn.Core.IoStatus;
 import Saturn.Encryption.AES;
 import Saturn.Structs.IoChunkId;
+import Saturn.Readers.FileReader;
 import Saturn.Misc.IoReadOptions;
 import Saturn.Structs.IoOffsetLength;
 import Saturn.IoStore.IoDirectoryIndex;
@@ -43,7 +44,7 @@ public:
 
         ChunkIdToIndex.clear();
         for (int32_t ChunkIndex = 0; ChunkIndex < Toc.ChunkIds.size(); ++ChunkIndex) {
-            ChunkIdToIndex.insert({ Toc.ChunkIds[ChunkIndex], ChunkIndex });
+            ChunkIdToIndex.insert_or_assign(Toc.ChunkIds[ChunkIndex], ChunkIndex);
         }
 
         if (EnumHasAnyFlags(Toc.Header.ContainerFlags, EIoContainerFlags::Encrypted)) {
@@ -91,8 +92,11 @@ public:
     }
 
     const int32_t* GetTocEntryIndex(const FIoChunkId& ChunkId) const {
-        auto It = ChunkIdToIndex.find(ChunkId);
-        return (It != ChunkIdToIndex.end()) ? &It->second : nullptr;
+        auto it = ChunkIdToIndex.find(ChunkId);
+        if (it != ChunkIdToIndex.end()) {
+            return &it->second;
+        }
+        return nullptr;
     }
 
     const FIoOffsetAndLength* GetOffsetAndLength(const FIoChunkId& ChunkId) const {
@@ -138,20 +142,20 @@ public:
 	// year 2022 ssd drives. For a file hot in the windows file cache, you can get 4+ GB/s with as few as
 	// 4 file handles, however for a cold file you need upwards of 32 in order to reach ~1.5 GB/s. This is
 	// low because IoStoreReader (note: not IoDispatcher!) reads are comparatively small - at most you're reading compression block sized
-	// chunks when uncompressed, however with Oodle those get cut by ~half, so with a defaualt block size
+	// chunks when uncompressed, however with Oodle those get cut by ~half, so with a default block size
 	// of 64kb, reads are generally less than 32kb, which is tough to use and get full ssd bandwith out of.
 	//
 	static constexpr uint32_t NumHandlesPerFile = 12;
 	struct FContainerFileAccess {
 		FCriticalSection HandleLock[NumHandlesPerFile];
-		FFileReaderNoWrite* Handle[NumHandlesPerFile];
+		FFileReader* Handle[NumHandlesPerFile];
 		std::atomic_uint32_t NextHandleIndex{ 0 };
 		bool bValid = false;
 
 		FContainerFileAccess(std::string& ContainerFileName) {
 			bValid = true;
 			for (uint32_t i = 0; i < NumHandlesPerFile; i++) {
-				Handle[i] = new FFileReaderNoWrite(ContainerFileName.c_str());
+				Handle[i] = new FFileReader(ContainerFileName.c_str());
 				if (Handle[i] == nullptr) {
 					bValid = false;
 				}
@@ -193,8 +197,7 @@ public:
             bool bReadSucceeded;
             {
                 ContainerFileAccess->Handle[OurIndex]->Seek(InPartitionOffset);
-                ContainerFileAccess->Handle[OurIndex]->Serialize(OutBuffer, InReadAmount);
-                bReadSucceeded = ContainerFileAccess->Handle[OurIndex]->Tell() == InPartitionIndex + InReadAmount;
+                bReadSucceeded = ContainerFileAccess->Handle[OurIndex]->Serialize(OutBuffer, InReadAmount);
             }
 
             OutSuccess->store(bReadSucceeded);
@@ -221,12 +224,13 @@ public:
             std::string ContainerFilePath;
             ContainerFilePath.append(InContainerPath);
             if (PartitionIndex > 0) {
-                ContainerFilePath.append("_s" + PartitionIndex);
+                ContainerFilePath.append("_s");
+                ContainerFilePath.append(std::to_string(PartitionIndex));
             }
             ContainerFilePath.append(".ucas");
 
-            ContainerFileAccessors.emplace_back(std::make_unique<FContainerFileAccess>(ContainerFilePath));
-            if (ContainerFileAccessors.back()->IsValid() == false) {
+            ContainerFileAccessors.emplace_back(std::unique_ptr<FContainerFileAccess>(new FContainerFileAccess(ContainerFilePath)));
+            if (ContainerFileAccessors[PartitionIndex]->IsValid() == false) {
                 return FIoStatusBuilder(EIoErrorCode::FileOpenFailed) << "Failed to open IoStore container file '" << TocFilePath << "'";
             }
         }
@@ -418,7 +422,7 @@ public:
     TIoStatusOr<FIoBuffer> Read(const FIoChunkId& ChunkId, const FIoReadOptions& Options) const {
         const FIoOffsetAndLength* OffsetAndLength = TocReader.GetOffsetAndLength(ChunkId);
         if (!OffsetAndLength) {
-            return FIoStatus(EIoErrorCode::NotFound, "Unkown chunk ID");
+            return FIoStatus(EIoErrorCode::NotFound, "Unknown chunk ID");
         }
 
         uint64_t RequestedOffset = Options.GetOffset();
@@ -703,6 +707,14 @@ public:
             OutPaths.push_back(Sb);
         }
     }
+
+    FIoStoreTocResource& GetTocResource() {
+        return TocReader.GetTocResource();
+    }
+
+    const FIoOffsetAndLength* GetOffsetAndLength(const FIoChunkId& ChunkId) const {
+        return TocReader.GetOffsetAndLength(ChunkId);
+    }
 private:
     FIoStoreTocReader TocReader;
     std::vector<TUniquePtr<FContainerFileAccess>> ContainerFileAccessors;
@@ -748,6 +760,14 @@ TIoStatusOr<FIoStoreTocChunkInfo> FIoStoreReader::GetChunkInfo(const FIoChunkId&
     return Impl->GetChunkInfo(Chunk);
 }
 
+FIoStoreTocResource& FIoStoreReader::GetTocResource() {
+    return Impl->GetTocResource();
+}
+
+FIoOffsetAndLength* FIoStoreReader::GetOffsetAndLength(FIoChunkId& ChunkId) {
+    return const_cast<FIoOffsetAndLength*>(std::move(Impl->GetOffsetAndLength(ChunkId)));
+}
+
 TIoStatusOr<FIoStoreTocChunkInfo> FIoStoreReader::GetChunkInfo(const uint32_t TocEntryIndex) const {
     return Impl->GetChunkInfo(TocEntryIndex);
 }
@@ -789,13 +809,25 @@ void FIoStoreReader::GetContainerFilePaths(std::vector<std::string>& OutPaths) {
 }
 
 void FIoStoreReader::GetFiles(TMap<uint64_t, uint32_t>& OutFileList) const {
-        const FIoDirectoryIndexReader& DirectoryIndex = GetDirectoryIndexReader();
+    const FIoDirectoryIndexReader& DirectoryIndex = GetDirectoryIndexReader();
 
     DirectoryIndex.IterateDirectoryIndex(
         FIoDirectoryIndexHandle::RootDirectory(),
         "",
         [&OutFileList](std::string Filename, uint32_t TocEntryIndex) -> bool {
             OutFileList.insert({ XXH3_64bits(Filename.c_str(), Filename.size()), TocEntryIndex });
+            return true;
+        });
+}
+
+void FIoStoreReader::GetFiles(std::vector<std::pair<std::string, uint32_t>>& OutFileList) const {
+    const FIoDirectoryIndexReader& DirectoryIndex = GetDirectoryIndexReader();
+
+    DirectoryIndex.IterateDirectoryIndex(
+        FIoDirectoryIndexHandle::RootDirectory(),
+        "",
+        [this, &OutFileList](std::string Filename, uint32_t TocEntryIndex) -> bool {
+            OutFileList.emplace_back(Filename, TocEntryIndex);
             return true;
         });
 }
